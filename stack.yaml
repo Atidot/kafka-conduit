@@ -1,0 +1,6 @@
+flags: {}
+packages:
+- '.'
+extra-deps:
+    - haskakafka-1.0.0
+resolver: lts-3.2
