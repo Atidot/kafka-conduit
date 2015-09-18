@@ -5,6 +5,7 @@ module Data.Conduit.Kafka (
     ) where
 
 import Data.ByteString as BS
+import Control.Concurrent (threadDelay)
 import Control.Monad (forever)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Trans.Resource (MonadResource)
@@ -30,7 +31,10 @@ import Haskakafka ( Kafka
                   , produceMessage
                   , drainOutQueue
                   )
-import Haskakafka.InternalRdKafkaEnum (RdKafkaTypeT(..))
+import Haskakafka.InternalRdKafkaEnum ( RdKafkaTypeT(..)
+                                      , RdKafkaRespErrT(..)
+                                      )
+
 
 kafkaSource :: forall m. (MonadResource m, MonadIO m) 
             => String             -- broker
@@ -65,7 +69,14 @@ kafkaSource broker
         consume (k, t) = do
             r <- liftIO $ consumeMessage t partition timeout
             case r of
-                Left _error -> return ()
+                Left _error -> do
+                    case _error of
+                        KafkaResponseError RdKafkaRespErrPartitionEof -> do
+                            liftIO $ threadDelay $ 1000 * 1000
+                            consume(k, t)
+                        otherwise -> do
+                            liftIO $ print . show $  _error
+                            return ()
                 Right m -> do
                     yield m
                     consume (k, t)
