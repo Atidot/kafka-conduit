@@ -22,6 +22,8 @@ library
                      , bytestring
                      , conduit
                      , haskakafka
+                     , data-default
+                     , lens
   default-language:    Haskell2010
 
 executable kafkacat
@@ -36,6 +38,8 @@ executable kafkacat
                      , conduit-combinators
                      , transformers
                      , resourcet
+                     , data-default
+                     , lens
   default-language:    Haskell2010
 
 test-suite kafka-conduit-test

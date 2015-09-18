@@ -1,10 +1,11 @@
 {-# LANGUAGE Rank2Types #-}
-module Data.Conduit.Kafka (
-      kafkaSource
-    , kafkaSink
-    ) where
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE StandaloneDeriving #-}
+module Data.Conduit.Kafka where
 
-import Data.ByteString as BS
+import Control.Lens
+import Data.Default (Default, def)
+import Data.ByteString as BS (ByteString)
 import Control.Concurrent (threadDelay)
 import Control.Monad (forever)
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -21,7 +22,7 @@ import Haskakafka ( Kafka
                   , KafkaProduceMessage (..)
                   , KafkaProducePartition (..)
                   , KafkaTopic
-                  , KafkaOffset
+                  , KafkaOffset(..)
                   , newKafka
                   , newKafkaTopic
                   , addBrokers
@@ -34,40 +35,44 @@ import Haskakafka ( Kafka
 import Haskakafka.InternalRdKafkaEnum ( RdKafkaTypeT(..)
                                       , RdKafkaRespErrT(..)
                                       )
+deriving instance Show KafkaOffset
+deriving instance Eq KafkaOffset
+data KafkaSettings = KafkaSettings { _brokers         :: !String
+                                   , _topic           :: !String
+                                   , _partition       :: !Int
+                                   , _offset          :: !KafkaOffset
+                                   , _timeout         :: !Int
+                                   , _configOverrides :: [(String, String)]
+                                   , _topicOverrides  :: [(String, String)]
+                                   } deriving (Show, Eq)
+makeLenses ''KafkaSettings 
+instance Default KafkaSettings where
+    def = KafkaSettings { _brokers   = "0.0.0.0"
+                        , _topic     = "default_topic"
+                        , _partition = 0
+                        , _offset    = KafkaOffsetBeginning
+                        , _timeout   = -1 -- no timeout
+                        , _configOverrides = [("socket.timeout.ms", "50000")]
+                        , _topicOverrides  = [("request.timeout.ms", "50000")]
+                        }
 
-
-kafkaSource :: forall m. (MonadResource m, MonadIO m) 
-            => String             -- broker
-            -> String             -- topic
-            -> Int                -- partition
-            -> KafkaOffset        -- offset
-            -> Int                -- timeout
-            -> [(String, String)] -- config overrides
-            -> [(String, String)] -- topic overrides
-            -> Producer m KafkaMessage
-kafkaSource broker 
-            topic 
-            partition 
-            offset 
-            timeout
-            config_overrides
-            topic_overrides
-            = bracketP init fini consume
+kafkaSource :: forall m. (MonadResource m, MonadIO m) => KafkaSettings -> Producer m KafkaMessage
+kafkaSource ks = bracketP init fini consume
     where
         init :: IO (Kafka, KafkaTopic)
         init = do 
-            kafka <- newKafka RdKafkaConsumer config_overrides
-            addBrokers kafka broker
-            topic <- newKafkaTopic kafka topic topic_overrides
-            startConsuming topic partition offset
+            kafka <- newKafka RdKafkaConsumer (ks^.configOverrides)
+            addBrokers kafka (ks^.brokers)
+            topic <- newKafkaTopic kafka (ks^.topic) (ks^.topicOverrides)
+            startConsuming topic (ks^.partition) (ks^.offset)
             return (kafka, topic)
 
         fini :: (Kafka, KafkaTopic) -> IO ()
-        fini (_kafka, topic) = liftIO $ stopConsuming topic partition
+        fini (_kafka, topic) = liftIO $ stopConsuming topic (ks^.partition)
 
         consume :: (MonadIO m) => (Kafka, KafkaTopic) -> Producer m KafkaMessage
         consume (k, t) = do
-            r <- liftIO $ consumeMessage t partition timeout
+            r <- liftIO $ consumeMessage t (ks^.partition) (ks^.timeout)
             case r of
                 Left _error -> do
                     case _error of
@@ -82,24 +87,14 @@ kafkaSource broker
                     consume (k, t)
 
 
-kafkaSink :: (MonadResource m, MonadIO m)
-          => String -- broker
-          -> String -- topic
-          -> Int    -- partition
-          -> [(String, String)] -- config overrides
-          -> [(String, String)] -- topic overrides
-          -> Consumer BS.ByteString m (Maybe KafkaError)
-kafkaSink broker 
-          topic 
-          partition 
-          config_overrides
-          topic_overrides = bracketP init fini produce
+kafkaSink :: (MonadResource m, MonadIO m) => KafkaSettings -> Consumer BS.ByteString m (Maybe KafkaError)
+kafkaSink ks = bracketP init fini produce
     where
         init :: IO (Kafka, KafkaTopic)
         init = do 
-            kafka <- newKafka RdKafkaProducer config_overrides
-            addBrokers kafka broker
-            topic <- newKafkaTopic kafka topic topic_overrides
+            kafka <- newKafka RdKafkaProducer (ks^.configOverrides)
+            addBrokers kafka (ks^.brokers)
+            topic <- newKafkaTopic kafka (ks^.topic) (ks^.topicOverrides)
             return (kafka, topic)
        
         fini :: (Kafka, KafkaTopic) -> IO () 
@@ -109,6 +104,6 @@ kafkaSink broker
         produce (_, _topic) = forever $ do
             _msg <- await
             case _msg of
-                Just msg -> liftIO $ produceMessage _topic (KafkaSpecifiedPartition partition) (KafkaProduceMessage msg)
+                Just msg -> liftIO $ produceMessage _topic (KafkaSpecifiedPartition (ks^.partition)) (KafkaProduceMessage msg)
                 Nothing -> return $ Just (KafkaError "empty stream")
 
