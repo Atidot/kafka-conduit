@@ -24,6 +24,20 @@ library
                      , haskakafka
   default-language:    Haskell2010
 
+executable kafkacat
+  hs-source-dirs:      test
+  main-is:             Main.hs
+  ghc-options:         -optl-static -optl-pthread  -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , kafka-conduit
+                     , haskakafka
+                     , conduit
+                     , conduit-extra
+                     , conduit-combinators
+                     , transformers
+                     , resourcet
+  default-language:    Haskell2010
+
 test-suite kafka-conduit-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
